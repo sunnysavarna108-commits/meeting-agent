@@ -1,18 +1,18 @@
 # 🎙️ Meeting-to-Action Agent
 
-> An autonomous agent that listens to your real-world conversations, remembers them, and acts on the commitments hidden inside — without being prompted.
+> An autonomous agent that listens to your real-world conversations, remembers the commitments in them, and acts on them without being prompted.
 
-Built solo for the **Solo AI Agents Hackathon** using **Omi**, **Lyzr** and **Qdrant**.
+Built solo for the **Stop Prompting. Code Solo Agents** hackathon (Track 1: Meeting & Lecture Intelligence) using **Omi**, **Lyzr** and **Qdrant**.
 
 ---
 
 ## The Problem
 
-We make promises in meetings and conversations every day ("I'll send you the doc by Friday"). Most are forgotten within hours because nobody writes them down.
+We make promises in conversations every day ("I'll send you the doc by Friday"). Most are forgotten within hours because nobody writes them down.
 
 ## The Solution
 
-**Meeting-to-Action Agent** captures conversations, extracts commitments and deadlines, stores them as searchable memory, and then **acts on its own**: drafting follow-ups, creating reminders and surfacing past promises.
+Meeting-to-Action Agent turns spoken conversations into tracked commitments. Once a conversation ends, a small team of agents extracts the tasks, stores them as searchable vector memory, takes action on its own (follow-up email drafts and reminders), and lets you ask questions about past meetings.
 
 ---
 
@@ -20,22 +20,23 @@ We make promises in meetings and conversations every day ("I'll send you the doc
 
 ```mermaid
 flowchart LR
-    A[Omi Wearable / Sample Transcript] --> B[omi_server.py<br/>FastAPI webhook]
-    B --> C[pipeline.py<br/>Orchestrator]
-    C --> D[extract.py<br/>Gemini: commitments, deadlines, people]
-    D --> E[lyzr_client.py<br/>Lyzr Agent decides actions]
-    D --> F[qdrant_store.py<br/>Vector memory]
-    F --> E
-    E --> G[Autonomous actions<br/>follow-ups, reminders]
-    F --> H[dashboard.py<br/>Streamlit UI]
+    A["Omi app<br/>voice to transcript"] -->|webhook| B["omi_server.py<br/>FastAPI"]
+    B --> C["pipeline.py<br/>orchestrator"]
+    C --> D["Extractor agent<br/>Lyzr agent via lyzr_client.py<br/>Gemini as fallback"]
+    D --> E["Memory agent<br/>qdrant_store.py<br/>Qdrant vector memory"]
+    E --> F["Action agent<br/>email drafts and reminders"]
+    E --> G["Q&A agent<br/>answers from memory"]
+    E --> H["dashboard.py<br/>Streamlit"]
+    F --> H
     G --> H
 ```
 
-1. **Capture**: Omi sends conversation transcripts to a FastAPI webhook (or you feed in a sample transcript).
-2. **Extract**: Gemini pulls out action items, owners, people and deadlines.
-3. **Remember**: Every conversation and commitment is embedded and stored in **Qdrant**.
-4. **Decide and Act**: A **Lyzr** agent retrieves relevant past context and autonomously decides what to do next.
-5. **Review**: A dashboard shows captured meetings, extracted tasks and agent actions.
+1. **Capture (Omi):** The Omi app sends real-time transcript segments to a FastAPI webhook (`/webhook/transcript`). The server collects the segments and processes the conversation after 30 seconds of silence.
+2. **Extract (Lyzr):** A Lyzr agent, called through its API, returns the action items as JSON: task, owner, person, deadline, type and priority. It ignores small talk and unclear speech. If Lyzr is unavailable, the pipeline falls back to Gemini so it keeps working.
+3. **Remember (Qdrant):** Each task is embedded and stored in Qdrant. Near-duplicate tasks are merged, and related past tasks are recalled before every new one is stored.
+4. **Act (autonomous):** The action agent drafts a follow-up email for every promise made to a named person and schedules a reminder log entry for tasks with a deadline. Nobody clicks anything.
+5. **Ask (past-meeting Q&A):** Questions such as "What did I promise Rahul?" are answered from the stored memory.
+6. **Observe:** A Streamlit dashboard shows every agent step (and whether Lyzr or the fallback did the extraction), the stored memory, the actions taken, and the Q&A box.
 
 ---
 
@@ -43,10 +44,10 @@ flowchart LR
 
 | Layer | Tool |
 |---|---|
-| Agent framework | [Lyzr](https://www.lyzr.ai/) |
+| Voice input | [Omi](https://www.omi.me/) (mobile app, real-time transcript webhook) |
+| Agent framework | [Lyzr](https://www.lyzr.ai/) (extractor agent, called by API) |
 | Vector memory | [Qdrant](https://qdrant.tech/) |
-| Real-world input | [Omi](https://www.omi.me/) |
-| LLM | Google Gemini |
+| LLM and embeddings | Google Gemini (fallback extraction, Q&A, embeddings) |
 | Backend | Python, FastAPI |
 | UI | Streamlit |
 
@@ -56,22 +57,26 @@ flowchart LR
 
 ```
 meeting-agent/
-├── omi_server.py        # FastAPI webhook that receives Omi transcripts
-├── pipeline.py          # Main flow: transcript → extract → store → act
-├── extract.py           # LLM extraction of commitments and deadlines
-├── lyzr_client.py       # Lyzr agent client
-├── qdrant_store.py      # Qdrant collection, embeddings, search
-├── dashboard.py         # Streamlit dashboard
-├── reset_memory.py      # Utility: deletes the Qdrant collection
-├── sample_transcript.txt# Demo input (no Omi device needed)
+├── omi_server.py         # FastAPI webhook that receives Omi transcripts
+├── pipeline.py           # Orchestrator: extract -> remember -> act, plus Q&A
+├── extract.py            # Extraction: Lyzr first, Gemini fallback
+├── lyzr_client.py        # Lyzr agent API client
+├── qdrant_store.py       # Qdrant collection, embeddings, duplicate check, recall
+├── dashboard.py          # Streamlit dashboard
+├── reset_memory.py       # Utility: deletes the Qdrant collection
+├── sample_transcript.txt # Demo input for testing without voice
 ├── requirements.txt
 ├── .env.example
 └── .gitignore
 ```
 
+An `outputs/` folder (agent log, email drafts, raw Omi payloads) is created at runtime and is git-ignored.
+
 ---
 
 ## Setup
+
+Requires Python 3.10+, a Qdrant Cloud cluster, a Gemini API key, a Lyzr agent with its API key, and the Omi mobile app.
 
 ### 1. Clone
 
@@ -98,11 +103,11 @@ pip install -r requirements.txt
 
 ### 4. Add your API keys
 
-Copy the template and fill in your own values:
-
 ```bash
 cp .env.example .env      # Windows: copy .env.example .env
 ```
+
+Fill in `.env`:
 
 ```
 GEMINI_API_KEY=
@@ -112,13 +117,17 @@ LYZR_API_KEY=
 LYZR_AGENT_ID=
 ```
 
-> ⚠️ Never commit `.env`. It is already listed in `.gitignore`.
+> ⚠️ Never commit `.env`. It is listed in `.gitignore`.
+
+### 5. Create the Lyzr agent
+
+In Lyzr Studio, create an agent whose instructions are the `PROMPT` text in `extract.py` (return a JSON list of action items, or `[]` if there are none). Copy its Agent ID and API key into `.env`.
 
 ---
 
 ## Running the Project
 
-**Process a sample transcript (no hardware needed):**
+**Quick test with a sample transcript (no voice needed):**
 
 ```bash
 python pipeline.py
@@ -127,15 +136,27 @@ python pipeline.py
 **Start the Omi webhook server:**
 
 ```bash
-uvicorn omi_server:app --reload --port 8000
+python -m uvicorn omi_server:app --port 8000
 ```
 
-Point your Omi app's transcript webhook to your server URL (use a tunnel such as ngrok for local testing).
-
-**Launch the dashboard:**
+**Expose it publicly (for Omi), in a second terminal:**
 
 ```bash
-streamlit run dashboard.py
+ngrok http 8000
+```
+
+In the Omi app go to **Settings → Developer Mode → Developer Settings** and set **Real-Time Transcript Webhook** to:
+
+```
+https://YOUR-NGROK-DOMAIN/webhook/transcript
+```
+
+Speak, then stay quiet for about 30 seconds. The server processes the conversation as a whole.
+
+**Launch the dashboard, in a third terminal:**
+
+```bash
+python -m streamlit run dashboard.py
 ```
 
 **Reset memory (clears the Qdrant collection):**
@@ -148,36 +169,37 @@ python reset_memory.py
 
 ## Demo
 
-1. A conversation is captured (live via Omi, or from `sample_transcript.txt`).
-2. The agent extracts commitments and deadlines automatically.
-3. Memory is written to Qdrant.
-4. The agent takes action **without any user prompt**.
-5. The dashboard shows what was captured and what the agent did.
+1. A conversation is spoken into the Omi app.
+2. The webhook receives the transcript; the Lyzr agent extracts commitments and deadlines.
+3. Tasks are written to Qdrant, with related past items recalled.
+4. The action agent drafts a follow-up email and logs reminders with no user prompt.
+5. The dashboard shows each agent's steps, and the Q&A tab answers questions about past meetings.
 
 🎥 **Demo video:** _add link here_
 
 ---
 
-## Why It Fits the Hackathon
+## Honest Notes and Limitations
 
-- **Autonomy**: the agent acts on its own after a conversation ends.
-- **Memory**: Qdrant lets it recall promises from past conversations.
-- **Real-world input**: Omi brings in live, spoken context.
+- Voice input was tested with the **Omi mobile app** (phone microphone), not the wearable. The `/simulate` endpoint and the dashboard's transcript box accept plain text for testing.
+- Follow-up emails are **drafted as text files** in `outputs/`, not sent. Reminders are **logged**, not yet created in a calendar.
+- Transcript quality depends on Omi's speech recognition. The extractor ignores unclear speech, but clear English in a quiet room works best.
+- **Privacy:** Omi sends everything it hears to the webhook. Raw payloads are saved under `outputs/` (git-ignored). Turn the webhook off when you are not testing.
 
 ---
 
 ## Roadmap
 
-- Calendar event creation
-- Email and Slack integrations
+- Real calendar events and sent emails (Google Calendar and Gmail)
 - Proactive reminders before deadlines
+- Separate Lyzr agents for memory, actions and Q&A
 - Cross-meeting insights ("you promised Rahul a doc last week")
 
 ---
 
 ## Author
 
-**Sunny Savarna**: [@sunnysavarna108-commits](https://github.com/sunnysavarna108-commits)
+**Sunny Choudhary**: [@sunnysavarna108-commits](https://github.com/sunnysavarna108-commits)
 
 ## License
 
